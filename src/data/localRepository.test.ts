@@ -18,6 +18,17 @@ describe('LocalRepository', () => {
     expect(listener).toHaveBeenCalledWith(['2026-09-03', '2026-09-08'])
   })
 
+  it('migra arrays antiguos de guardias al modelo multimarcas', async () => {
+    localStorage.setItem('guardSalaryApp:months:2026-09', JSON.stringify(['2026-09-03']))
+    expect(await new LocalRepository().getMonth('2026-09')).toEqual({ marks: { '2026-09-03': ['guard'] } })
+  })
+
+  it('persiste marcas múltiples e IRPF mensual', async () => {
+    const repository = new LocalRepository()
+    await repository.saveMonth('2026-09', { marks: { '2026-09-03': ['guard', 'vacation'] }, irpfOverride: 17.1 })
+    expect(await repository.getMonth('2026-09')).toEqual({ marks: { '2026-09-03': ['guard', 'vacation'] }, irpfOverride: 17.1 })
+  })
+
   it('tolera almacenamiento vacío o datos dañados', async () => {
     localStorage.setItem('guardSalaryApp:profile', '{')
     expect(await new LocalRepository().getProfile()).toBeNull()

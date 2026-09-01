@@ -1,23 +1,16 @@
 import { getDay, parseISO } from 'date-fns'
 import { getHolidays } from '../config/holidays'
 import { GuardType, ResidencyYear, salaryRates } from '../config/salaryRates'
-export interface GuardDetail { date:string; type:GuardType; label:string; amount:number }
-export interface SalaryCalculation { baseSalary:number; guardPayments:number; grossSalary:number; irpfAmount:number; estimatedAfterIrpf:number; details:GuardDetail[] }
-export function classifyGuard(date:string,special:string[]=[]):GuardType {
- if(special.includes(date)) return 'special'
- const parsed=parseISO(date)
- if(getHolidays(parsed.getFullYear())[date]) return 'holiday'
- const day=getDay(parsed)
- if(day===0) return 'holiday'
- if(day===6) return 'saturday'
- return 'weekday'
-}
+export interface GuardDetail { date:string;type:GuardType;label:string;amount:number }
+export interface HistoricalGuardMonth { guardCount:number;guardPay:number }
+export interface VacationProration { monthsUsed:number;averageMonthlyGuardPay:number;averageMonthlyGuardCount:number;vacationRatio:number;equivalentVacationGuards:number;vacationGuardProration:number }
+export interface SalaryCalculation {baseSalary:number;guardPayments:number;vacationGuardProration:number;customFixedMarkers:number;grossSalary:number;irpfAmount:number;estimatedAfterIrpf:number;details:GuardDetail[]}
+export function classifyGuard(date:string,special:string[]=[]):GuardType {if(special.includes(date))return'special';const parsed=parseISO(date);if(getHolidays(parsed.getFullYear())[date])return'holiday';const day=getDay(parsed);return day===0?'holiday':day===6?'saturday':'weekday'}
 const labels:Record<GuardType,string>={weekday:'Laborable',saturday:'Sábado',holiday:'Domingo / festivo',special:'Festivo especial'}
-export function calculateSalary(args:{guards:string[];residencyYear:ResidencyYear;baseSalary:number;irpf:number;specialHolidays?:string[]}):SalaryCalculation {
- const rate=salaryRates[args.residencyYear]
- const details=[...new Set(args.guards)].sort().map(date=>{const type=classifyGuard(date,args.specialHolidays);return {date,type,label:labels[type],amount:rate[type]}})
- const guardPayments=details.reduce((sum,item)=>sum+item.amount,0)
- const grossSalary=args.baseSalary+guardPayments
- const irpfAmount=grossSalary*Math.max(0,args.irpf)/100
- return {baseSalary:args.baseSalary,guardPayments,grossSalary,irpfAmount,estimatedAfterIrpf:grossSalary-irpfAmount,details}
-}
+export function calculateGuardPayments(guards:string[],residencyYear:ResidencyYear,special:string[]=[]){const rate=salaryRates[residencyYear];const details=[...new Set(guards)].sort().map(date=>{const type=classifyGuard(date,special);return{date,type,label:labels[type],amount:rate[type]}});return{details,guardPayments:details.reduce((sum,item)=>sum+item.amount,0)}}
+/** Domain formula: averages available previous months, then applies the calendar-day vacation ratio. */
+export function calculateVacationGuardProration(args:{history:HistoricalGuardMonth[];vacationDays:number;daysInMonth:number}):VacationProration {const history=args.history.slice(-3);const monthsUsed=history.length;const averageMonthlyGuardPay=monthsUsed?history.reduce((s,m)=>s+m.guardPay,0)/monthsUsed:0;const averageMonthlyGuardCount=monthsUsed?history.reduce((s,m)=>s+m.guardCount,0)/monthsUsed:0;const vacationRatio=args.daysInMonth?Math.max(0,Math.min(args.vacationDays,args.daysInMonth))/args.daysInMonth:0;return{monthsUsed,averageMonthlyGuardPay,averageMonthlyGuardCount,vacationRatio,equivalentVacationGuards:averageMonthlyGuardCount*vacationRatio,vacationGuardProration:averageMonthlyGuardPay*vacationRatio}}
+export function suggestedLeaveDates(guards:string[]):string[]{return guards.map(date=>{const next=parseISO(date);next.setDate(next.getDate()+1);return next.toISOString().slice(0,10)})}
+export function effectiveBaseSalary(year:ResidencyYear,override:number){return override>0?override:salaryRates[year].base}
+export function calculateSalary(args:{guards:string[];residencyYear:ResidencyYear;baseSalary:number;irpf:number;specialHolidays?:string[];vacationGuardProration?:number;customFixedMarkers?:number}):SalaryCalculation {const baseSalary=effectiveBaseSalary(args.residencyYear,args.baseSalary);const {details,guardPayments}=calculateGuardPayments(args.guards,args.residencyYear,args.specialHolidays);const vacationGuardProration=args.vacationGuardProration??0;const customFixedMarkers=args.customFixedMarkers??0;const grossSalary=baseSalary+guardPayments+vacationGuardProration+customFixedMarkers;const irpfAmount=grossSalary*Math.max(0,args.irpf)/100;return{baseSalary,guardPayments,vacationGuardProration,customFixedMarkers,grossSalary,irpfAmount,estimatedAfterIrpf:grossSalary-irpfAmount,details}}
+export function resolveEffectiveIrpf(current:string,months:Record<string,{irpfOverride?:number}|undefined>,initial:number){if(months[current]?.irpfOverride!==undefined)return{value:months[current]!.irpfOverride!,source:'custom' as const,sourceMonth:current};const keys=Object.keys(months).filter(key=>key<current&&months[key]?.irpfOverride!==undefined).sort().reverse();return keys.length?{value:months[keys[0]]!.irpfOverride!,source:'inherited' as const,sourceMonth:keys[0]}:{value:initial,source:'initial' as const}}
